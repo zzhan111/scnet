@@ -7,7 +7,7 @@
 - 栏上显示剩余 Credits（默认），中键切换：剩余 / 百分比 / 已用
 - 剩余低于 10% 变警告色
 - 点击打开面板：剩余大字、用量条、套餐名、到期时间、更新时间
-- 右键打开 SCNet 控制台 Token Plan 页；面板内 `r` 换显示、`Enter` 打开控制台
+- 右键在 ma-browser 的 CDP 实例（登录态所在）打开 SCNet 控制台 Token Plan 页，浏览器没开会自动拉起；面板内 `r` 换显示、`Enter` 同效
 - 每 5 分钟自动刷新；`omarchy-shell local.scnet refresh` 立即刷新
 
 ## 安装

@@ -108,7 +108,9 @@ Panel {
   }
 
   function openConsole() {
-    Quickshell.execDetached(["xdg-open", "https://www.scnet.cn/ui/console/index.html#/llm/token-plan"])
+    // 必须 ma-browser open 而非 xdg-open：登录态在 ma-browser 拉起的 CDP 实例里，
+    // 系统默认浏览器是另一个 cookie jar；且浏览器没开时它会自动拉起。
+    Quickshell.execDetached(["ma-browser", "open", "https://www.scnet.cn/ui/console/index.html#/llm/token-plan"])
     root.close()
   }
 
