@@ -54,6 +54,6 @@ omarchy-shell local.scnet state                 # 当前快照 JSON
 
 ## 限制
 
-- 浏览器没开或无 scnet.cn 登录页时显示 `—`；恢复后 30s 内自动重连
+- 浏览器没开时显示 `—`，恢复后 30s 内自动重连；不需要开着 scnet.cn 页面（任意 tab 即可）
 - SCNet 控制台 API 无文档契约，字段变化需同步更新 `bin/scnet-watch`
 - 只读：不写浏览器、不改网站状态

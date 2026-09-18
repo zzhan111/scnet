@@ -21,13 +21,14 @@ PLAN_API = "https://www.scnet.cn/acx/charge/account/currentuser/tokenplan/list"
 
 
 def cdp_websocket_url() -> str | None:
-    """找一个开着 scnet.cn 页面的 tab 的调试地址。"""
+    """任意 page tab 的调试地址即可：cookie 是 profile 级的，
+    在任何 tab 上 Network.getAllCookies 都返回全量（已实测）。"""
     for port in CDP_PORTS:
         try:
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=2) as r:
                 tabs = json.load(r)
             for t in tabs:
-                if t.get("type") == "page" and "scnet.cn" in t.get("url", ""):
+                if t.get("type") == "page" and not t.get("url", "").startswith("devtools"):
                     return t.get("webSocketDebuggerUrl")
         except Exception:
             continue
