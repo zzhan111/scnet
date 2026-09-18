@@ -231,7 +231,7 @@ Panel {
             Text {
               textFormat: Text.PlainText
               visible: root.ok
-              text: root.snap.name + " · " + Math.round(root.snap.percent) + "% 剩余"
+              text: root.ok ? (root.snap.name + " · " + Math.round(root.snap.percent) + "% 剩余") : ""
               color: root.fg
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
