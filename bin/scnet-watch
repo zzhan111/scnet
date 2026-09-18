@@ -1,81 +1,70 @@
 #!/usr/bin/env python3
 # scnet-watch - SCNet Token Plan 月度 Credits 剩余额度。
 #
-# 读取浏览器 cookie 拿到登录态，查询 SCNet 控制台 API：
+# 通过 CDP (Chrome DevTools Protocol) 从正在运行的浏览器拿 scnet.cn 的
+# 登录 cookie（浏览器自己解密，本脚本零解密依赖），再查询 SCNet 控制台 API：
 #   GET https://www.scnet.cn/acx/charge/account/currentuser/tokenplan/list
-# 输出单行 JSON：{"remaining":…, "used":…, "total":…, "percent":…, "name":…, "expire":…}
+# 输出单行 JSON：{"name":…, "remaining":…, "used":…, "total":…, "percent":…, "expire":…}
 #
-# 依赖：~/.config/chromium 或 ~/.bb-browser 的 Cookie（libsecret 密钥解密 v10）。
-# 只读，无网络出站写入。
-import base64
-import hashlib
+# 依赖：浏览器开着（CDP 端口），Python 3 + websocket-client。
+# 只读：不写浏览器，不改网站。
 import json
 import os
-import re
-import sqlite3
-import subprocess
 import sys
 import time
 import urllib.request
 
+try:
+    import websocket
+except ImportError:
+    print(json.dumps({"error": "missing-websocket-client"}), flush=True)
+    sys.exit(1)
+
+CDP_PORTS = [19825, 9222]
 PLAN_API = "https://www.scnet.cn/acx/charge/account/currentuser/tokenplan/list"
 
-COOKIE_PROFILES = [
-    os.path.expanduser("~/.config/chromium/Default/Cookies"),          # 系统浏览器
-    os.path.expanduser("~/.bb-browser/browser/profile/Default/Cookies"),  # ma-browser
-]
 
-
-def _v10_key() -> bytes:
-    """libsecret 里的 Chromium 加密密钥 → AES 密钥。任一 profile 的密钥都行（同一 Chromium 安装共用）。"""
-    out = subprocess.run(
-        ["secret-tool", "search", "--all", "xdg:schema", "chrome_libsecret_os_crypt_password_v2"],
-        capture_output=True, text=True,
-    ).stdout
-    secrets = re.findall(r"secret = (\S+)", out)
-    for secret in secrets:
-        yield hashlib.pbkdf2_hmac("sha256", secret.encode(), b"saltysalt", 1, dklen=16)
-
-
-def read_token_cookie() -> str | None:
-    """从任一可用的 Cookie 库取 scnet.cn 的 Token（v10 加密）。"""
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    except ImportError:
-        print("scnet: 需要 cryptography 库", file=sys.stderr)
-        return None
-    for db in COOKIE_PROFILES:
-        if not os.path.exists(db):
+def cdp_websocket_url() -> str | None:
+    """找一个开着 scnet.cn 页面的 tab 的调试地址。"""
+    for port in CDP_PORTS:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=2) as r:
+                tabs = json.load(r)
+            for t in tabs:
+                if t.get("type") == "page" and "scnet.cn" in t.get("url", ""):
+                    return t.get("webSocketDebuggerUrl")
+        except Exception:
             continue
-        for key in _v10_key():
-            try:
-                con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-                rows = con.execute(
-                    "select name, encrypted_value from cookies where host_key='www.scnet.cn' and name in ('Token','userName','TGC','jsessionid')"
-                ).fetchall()
-                con.close()
-            except sqlite3.Error:
-                continue
-            got = {}
-            for name, enc in rows:
-                if enc[:3] != b"v10":
-                    continue
-                try:
-                    got[name] = AESGCM(key).decrypt(enc[3:15], enc[15:], None).decode()
-                except Exception:
-                    pass
-            if got.get("Token"):
-                return got["Token"]
     return None
 
 
-def fetch(token: str) -> dict:
-    req = urllib.request.Request(PLAN_API, headers={"Cookie": f"Token={token}"})
+def get_cookies(url: str) -> dict[str, str]:
+    """从 tab 拿全部 cookie，返回 {name: value}。"""
+    # CDP 默认拒绝带 Origin 的非浏览器连接；suppress_origin 不发 Origin 头即握手成功。
+    ws = websocket.create_connection(url, timeout=10, suppress_origin=True)
+    try:
+        ws.send(json.dumps({"id": 1, "method": "Network.getAllCookies"}))
+        while True:
+            msg = json.loads(ws.recv())
+            if msg.get("id") != 1:
+                continue
+            out = {}
+            for c in msg.get("result", {}).get("cookies", []):
+                domain = c.get("domain", "")
+                if domain in ("www.scnet.cn", ".scnet.cn"):
+                    out[c["name"]] = c["value"]
+            return out
+    finally:
+        ws.close()
+
+
+def fetch(cookies: dict[str, str]) -> dict:
+    header = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    req = urllib.request.Request(PLAN_API, headers={"Cookie": header})
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.load(r)
     if data.get("code") != "0":
         raise RuntimeError(f"API error: {data.get('msg')}")
-    # 取未用尽的那个订阅（当前生效套餐）；全用尽则取最近过期的。
     plans = [p for p in data.get("data", []) if p.get("status") == "enable"]
     active = max(plans, key=lambda p: (p["totalAmount"] - p["usedAmount"], p["maxExpireTime"] or ""))
     remaining = active["totalAmount"] - active["usedAmount"]
@@ -85,17 +74,21 @@ def fetch(token: str) -> dict:
         "used": round(active["usedAmount"], 1),
         "total": round(active["totalAmount"], 1),
         "percent": round(remaining / active["totalAmount"] * 100, 1),
-        "expire": active.get("maxExpireTime", ""),
+        "expire": active.get("maxExpireTime", ""), "ts": time.time(),
     }
 
 
 def main() -> int:
-    token = read_token_cookie()
-    if not token:
-        print(json.dumps({"error": "no-login"}))
+    url = cdp_websocket_url()
+    if not url:
+        print(json.dumps({"error": "no-browser-tab"}))
         return 1
     try:
-        snap = fetch(token)
+        cookies = get_cookies(url)
+        if "Token" not in cookies:
+            print(json.dumps({"error": "no-login"}))
+            return 1
+        snap = fetch(cookies)
     except Exception as e:
         print(json.dumps({"error": str(e)}))
         return 1
