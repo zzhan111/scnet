@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "local.scnet",
+  "name": "SCNet Token Plan",
+  "version": "0.1.0",
+  "author": "beta",
+  "license": "Apache-2.0",
+  "description": "SCNet (超算互联网) Token Plan credits 剩余额度显示在 Omarchy 顶栏。",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "SCNet Credits",
+    "description": "SCNet Token Plan 月度 Credits 剩余额度，直接显示在栏上，点击打开明细面板。",
+    "category": "AI",
+    "aliases": [
+      "scnet",
+      "credits"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "display": "remaining"
+    },
+    "schema": [
+      {
+        "key": "display",
+        "type": "enum",
+        "label": "显示内容",
+        "options": [
+          "remaining",
+          "percent",
+          "used"
+        ],
+        "defaultValue": "remaining",
+        "description": "remaining = 剩余 Credits；percent = 剩余百分比；used = 已用 Credits。"
+      }
+    ]
+  }
+}

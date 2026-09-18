@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+# scnet-watch - SCNet Token Plan 月度 Credits 剩余额度。
+#
+# 读取浏览器 cookie 拿到登录态，查询 SCNet 控制台 API：
+#   GET https://www.scnet.cn/acx/charge/account/currentuser/tokenplan/list
+# 输出单行 JSON：{"remaining":…, "used":…, "total":…, "percent":…, "name":…, "expire":…}
+#
+# 依赖：~/.config/chromium 或 ~/.bb-browser 的 Cookie（libsecret 密钥解密 v10）。
+# 只读，无网络出站写入。
+import base64
+import hashlib
+import json
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import time
+import urllib.request
+
+PLAN_API = "https://www.scnet.cn/acx/charge/account/currentuser/tokenplan/list"
+
+COOKIE_PROFILES = [
+    os.path.expanduser("~/.config/chromium/Default/Cookies"),          # 系统浏览器
+    os.path.expanduser("~/.bb-browser/browser/profile/Default/Cookies"),  # ma-browser
+]
+
+
+def _v10_key() -> bytes:
+    """libsecret 里的 Chromium 加密密钥 → AES 密钥。任一 profile 的密钥都行（同一 Chromium 安装共用）。"""
+    out = subprocess.run(
+        ["secret-tool", "search", "--all", "xdg:schema", "chrome_libsecret_os_crypt_password_v2"],
+        capture_output=True, text=True,
+    ).stdout
+    secrets = re.findall(r"secret = (\S+)", out)
+    for secret in secrets:
+        yield hashlib.pbkdf2_hmac("sha256", secret.encode(), b"saltysalt", 1, dklen=16)
+
+
+def read_token_cookie() -> str | None:
+    """从任一可用的 Cookie 库取 scnet.cn 的 Token（v10 加密）。"""
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError:
+        print("scnet: 需要 cryptography 库", file=sys.stderr)
+        return None
+    for db in COOKIE_PROFILES:
+        if not os.path.exists(db):
+            continue
+        for key in _v10_key():
+            try:
+                con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                rows = con.execute(
+                    "select name, encrypted_value from cookies where host_key='www.scnet.cn' and name in ('Token','userName','TGC','jsessionid')"
+                ).fetchall()
+                con.close()
+            except sqlite3.Error:
+                continue
+            got = {}
+            for name, enc in rows:
+                if enc[:3] != b"v10":
+                    continue
+                try:
+                    got[name] = AESGCM(key).decrypt(enc[3:15], enc[15:], None).decode()
+                except Exception:
+                    pass
+            if got.get("Token"):
+                return got["Token"]
+    return None
+
+
+def fetch(token: str) -> dict:
+    req = urllib.request.Request(PLAN_API, headers={"Cookie": f"Token={token}"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.load(r)
+    if data.get("code") != "0":
+        raise RuntimeError(f"API error: {data.get('msg')}")
+    # 取未用尽的那个订阅（当前生效套餐）；全用尽则取最近过期的。
+    plans = [p for p in data.get("data", []) if p.get("status") == "enable"]
+    active = max(plans, key=lambda p: (p["totalAmount"] - p["usedAmount"], p["maxExpireTime"] or ""))
+    remaining = active["totalAmount"] - active["usedAmount"]
+    return {
+        "name": active.get("name", ""),
+        "remaining": round(remaining, 1),
+        "used": round(active["usedAmount"], 1),
+        "total": round(active["totalAmount"], 1),
+        "percent": round(remaining / active["totalAmount"] * 100, 1),
+        "expire": active.get("maxExpireTime", ""),
+    }
+
+
+def main() -> int:
+    token = read_token_cookie()
+    if not token:
+        print(json.dumps({"error": "no-login"}))
+        return 1
+    try:
+        snap = fetch(token)
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    print(json.dumps(snap, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
