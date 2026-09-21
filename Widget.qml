@@ -46,6 +46,7 @@ Panel {
   })
   readonly property var snap: demoMode ? demoSnap : liveSnap
   readonly property bool ok: !!snap && !snap.error
+  readonly property bool needsLogin: !!snap && /no-login|no-browser-tab|401|unauthorized/i.test(String(snap.error || ""))
 
   readonly property string barLabel: {
     if (!ok) return ""
@@ -107,6 +108,10 @@ Panel {
     watcherProc.running = true
   }
 
+  function openLogin() {
+    Quickshell.execDetached(["ma-browser", "open", "https://www.scnet.cn/sso/login"])
+  }
+
   function openConsole() {
     // 必须 ma-browser open 而非 xdg-open：登录态在 ma-browser 拉起的 CDP 实例里，
     // 系统默认浏览器是另一个 cookie jar；且浏览器没开时它会自动拉起。
@@ -138,7 +143,7 @@ Panel {
     BarIconButton {
       id: button
       bar: root.bar
-      text: "\u{f0b1c}" // cloud-cog-ish glyph; mark is drawn dimmed when offline
+      text: "\u{f07af}" // chart-donut / data-usage glyph; mark is drawn dimmed when offline
       onPressed: function(buttonCode) { root.barPressed(buttonCode) }
     }
 
@@ -242,6 +247,32 @@ Panel {
         }
 
         Rectangle { width: parent.width; height: 1; color: root.faint }
+
+        Column {
+          visible: root.needsLogin
+          width: parent.width
+          spacing: Style.space(4)
+
+          Text {
+            width: parent.width
+            textFormat: Text.PlainText
+            text: "未检测到 SCNet 登录态"
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            wrapMode: Text.WordWrap
+          }
+
+          Button {
+            width: parent.width
+            text: "登录 SCNet"
+            bordered: true
+            foreground: root.fg
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            onClicked: root.openLogin()
+          }
+        }
 
         // The one number that matters, large.
         Text {
